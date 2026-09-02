@@ -27,8 +27,47 @@ DATA_DIR.mkdir(
 DB_FILE = DATA_DIR / "finance.db"
 
 
+class connection:
+    """Lightweight wrapper around sqlite3 connection."""
+
+    def __init__(self, database_path=DB_FILE):
+        self.database_path = str(Path(database_path))
+        self._connection = None
+        self.connect()
+
+    def connect(self):
+        if self._connection is None:
+            self._connection = sqlite3.connect(self.database_path)
+            self._connection.row_factory = sqlite3.Row
+        return self._connection
+
+    def cursor(self):
+        return self.connect().cursor()
+
+    def execute(self, query, params=()):
+        return self.connect().execute(query, params)
+
+    def commit(self):
+        if self._connection is not None:
+            self._connection.commit()
+
+    def close(self):
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self.connect(), name)
+
+
 def get_connection():
-    return sqlite3.connect(DB_FILE)
+    return connection(DB_FILE)
 
 
 def init_database():
@@ -83,11 +122,6 @@ def init_database():
             UNIQUE(name, currency)
         )
     """)
-
-
-
-    connection.commit()
-    connection.close()
 
 
     connection.commit()
