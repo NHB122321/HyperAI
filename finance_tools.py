@@ -34,19 +34,60 @@ def get_connection():
 def init_database():
     connection = get_connection()
     cursor = connection.cursor()
+    # -------------------------
+    # ТРАНЗАКЦИИ
+    # -------------------------
 
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS savings_goals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        target_amount REAL NOT NULL,
-        saved_amount REAL NOT NULL DEFAULT 0,
-        currency TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        UNIQUE(name, currency)
-    )
-""")
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT NOT NULL,
+            category TEXT,
+            description TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+
+    # -------------------------
+    # БЮДЖЕТЫ
+    # -------------------------
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS budgets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(category, currency)
+        )
+    """)
+
+
+    # -------------------------
+    # ФИНАНСОВЫЕ ЦЕЛИ
+    # -------------------------
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS savings_goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            target_amount REAL NOT NULL,
+            saved_amount REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(name, currency)
+        )
+    """)
+
+
+
+    connection.commit()
+    connection.close()
 
 
     connection.commit()
