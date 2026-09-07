@@ -1,8 +1,6 @@
-from dotenv import load_dotenv
+from config import TRANSCRIPTION_MODEL
 from openai import OpenAI
 
-
-load_dotenv()
 
 client = OpenAI()
 
@@ -13,7 +11,7 @@ def transcribe_audio(file_path):
 
         transcription = (
             client.audio.transcriptions.create(
-                model="gpt-transcribe",
+                model=TRANSCRIPTION_MODEL,
                 file=audio_file
             )
         )

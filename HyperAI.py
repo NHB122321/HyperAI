@@ -1,11 +1,16 @@
 from datetime import datetime
 
+# Конфигурация загружает .env до импорта модулей с настройками DATA_DIR.
+from config import MAX_AGENT_STEPS, AGENT_INSTRUCTIONS
+from model_router import ModelRouter
+
 from logger import (
     log_tool,
     log_result,
     log_error,
     log_user_message,
-    log_assistant_message
+    log_assistant_message,
+    log_model_route
 )
 
 from finance_tools import (
@@ -32,15 +37,7 @@ from finance_tools import (
 
 import json
 
-from dotenv import load_dotenv
 from openai import OpenAI
-
-
-from config import (
-    MODEL,
-    MAX_AGENT_STEPS,
-    AGENT_INSTRUCTIONS
-)
 
 from crypto_tools import get_crypto_price
 
@@ -49,10 +46,8 @@ from memory_tools import (
     read_memory
 )
 
-load_dotenv()
-
-
 client = OpenAI()
+model_router = ModelRouter()
 
 
 
@@ -918,8 +913,19 @@ def execute_tool(item):
 # -------------------------
 def process_message(
     user_message,
-    previous_response_id=None
+    previous_response_id=None,
+    *,
+    mode=None,
+    previous_user_message=None
 ):
+
+    # Один выбор на весь запрос: ответы инструментов получает та же модель.
+    decision = model_router.choose(
+        user_message,
+        mode=mode,
+        previous_user_message=previous_user_message
+    )
+    log_model_route(decision.mode, decision.model, decision.reason)
 
     init_database()
 
@@ -957,7 +963,7 @@ def process_message(
     # -------------------------
 
     request = {
-        "model": MODEL,
+        "model": decision.model,
         "instructions": runtime_instructions,
         "input": user_message,
         "tools": tools
@@ -1061,7 +1067,7 @@ def process_message(
         # -------------------------
 
         response = client.responses.create(
-            model=MODEL,
+            model=decision.model,
             instructions=runtime_instructions,
             previous_response_id=response.id,
             input=tool_outputs,
@@ -1086,168 +1092,34 @@ def process_message(
     )
 
 def run_agent():
-
+    """Консоль использует тот же process_message, что и Telegram."""
     previous_response_id = None
-
+    previous_user_message = None
+    mode = model_router.default_mode
 
     while True:
-
-        user_message = input(
-            "\nТы: "
-        )
-
-
-        if user_message.lower() == "выход":
-
-            print(
-                "Агент: Пока!"
-            )
-
-            break
-
-
-        answer, previous_response_id = (
-            process_message(
-                user_message,
-                previous_response_id
-            )
-        )
-
-
-        print(
-            "Агент:",
-            answer
-        )
-
-    previous_response_id = None
-
-
-    while True:
-
         user_message = input("\nТы: ")
+        command = user_message.strip().lower()
 
-        log_user_message(user_message)
-
-        if user_message.lower() == "выход":
+        if command == "выход":
             print("Агент: Пока!")
             break
 
+        if command in ("/auto", "/fast", "/smart"):
+            mode = command[1:]
+            print(f"Агент: Режим {mode}. История разговора сохранена.")
+            continue
 
-        # -------------------------
-        # ПЕРВЫЙ ЗАПРОС
-        # -------------------------
+        if command == "/mode":
+            print(f"Агент: Текущий режим — {mode}.")
+            continue
 
-        request = {
-            "model": MODEL,
-            "instructions": runtime_instructions, # type: ignore
-            "input": user_message,
-            "tools": tools
-        }
-
-        if previous_response_id is not None:
-            request["previous_response_id"] = (
-                previous_response_id
-            )
-
-        response = client.responses.create(
-            **request
+        answer, previous_response_id = process_message(
+            user_message,
+            previous_response_id,
+            mode=mode,
+            previous_user_message=previous_user_message
         )
-
-
-        # -------------------------
-        # AGENT LOOP
-        # -------------------------
-
-        for step in range(MAX_AGENT_STEPS):
-
-            tool_calls = [
-                item
-                for item in response.output
-                if item.type == "function_call"
-            ]
-
-
-            # -------------------------
-            # ФИНАЛЬНЫЙ ОТВЕТ
-            # -------------------------
-
-            if not tool_calls:
-
-                assistant_message = (
-                    response.output_text
-                )
-
-                print(
-                    "Агент:",
-                    assistant_message
-                )
-
-                log_assistant_message(
-                    assistant_message
-                )
-
-                previous_response_id = (
-                    response.id
-                )
-
-                break
-
-
-            # ВАЖНО:
-            # создаём список ДО использования
-            tool_outputs = []
-
-
-            # -------------------------
-            # ВЫПОЛНЯЕМ TOOLS
-            # -------------------------
-
-            for item in tool_calls:
-
-                print(
-                    f"[Агент использует: "
-                    f"{item.name}]"
-                )
-
-                log_tool(item.name)
-
-                result = execute_tool(item)
-
-                print(
-                    f"[Результат: {result}]"
-                )
-
-                log_result(result)
-
-
-                tool_outputs.append({
-                    "type":
-                        "function_call_output",
-
-                    "call_id":
-                        item.call_id,
-
-                    "output":
-                        str(result)
-                })
-
-
-            # -------------------------
-            # ВОЗВРАЩАЕМ РЕЗУЛЬТАТ GPT
-            # -------------------------
-
-            response = client.responses.create(
-                model=MODEL,
-                instructions=runtime_instructions, # type: ignore
-                previous_response_id=response.id,
-                input=tool_outputs,
-                tools=tools
-            )
-
-
-        else:
-
-            print(
-                "Агент: Достигнут лимит "
-                "шагов агента."
-            )
+        if not model_router.is_continuation(user_message) or previous_user_message is None:
+            previous_user_message = user_message
+        print("Агент:", answer)

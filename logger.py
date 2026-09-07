@@ -36,3 +36,8 @@ def log_assistant_message(message):
     logging.info(
         f"ASSISTANT | {message}"
     )
+
+
+def log_model_route(mode, model, reason):
+    """Помогает понять, почему маршрутизатор выбрал эту модель."""
+    logging.info("MODEL | mode=%s | model=%s | reason=%s", mode, model, reason)

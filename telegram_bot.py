@@ -1,7 +1,9 @@
 import os
+import asyncio
 from pathlib import Path
+from config import FAST_MODEL, SMART_MODEL, MODEL_MODE
+from model_router import ModelRouter
 from voice_tools import transcribe_audio
-from dotenv import load_dotenv
 
 from telegram import (
     Update,
@@ -18,8 +20,6 @@ from telegram.ext import (
 
 from HyperAI import process_message
 
-load_dotenv()
-
 TELEGRAM_BOT_TOKEN = os.getenv(
     "TELEGRAM_BOT_TOKEN"
 )
@@ -29,6 +29,50 @@ TELEGRAM_ALLOWED_USER_ID = int(
 )
 
 chat_contexts = {}
+# Режим и последний самостоятельный запрос принадлежат конкретному чату.
+chat_modes = {}
+chat_messages = {}
+
+
+def describe_mode(mode):
+    if mode == "fast":
+        return f"fast — {FAST_MODEL}"
+    if mode == "smart":
+        return f"smart — {SMART_MODEL}"
+    return f"auto — {FAST_MODEL} для простых задач, {SMART_MODEL} для сложных"
+
+
+async def set_model_mode(update: Update, mode: str):
+    """Меняем только режим; история диалога остаётся на месте."""
+    if not await check_access(update):
+        return
+    chat_modes[update.effective_chat.id] = mode
+    await update.message.reply_text(
+        f"Режим: {describe_mode(mode)}.\nИстория разговора сохранена.",
+        reply_markup=MAIN_KEYBOARD
+    )
+
+
+async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await set_model_mode(update, "auto")
+
+
+async def fast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await set_model_mode(update, "fast")
+
+
+async def smart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await set_model_mode(update, "smart")
+
+
+async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_access(update):
+        return
+    mode = chat_modes.get(update.effective_chat.id, MODEL_MODE)
+    await update.message.reply_text(
+        f"Текущий режим: {describe_mode(mode)}.",
+        reply_markup=MAIN_KEYBOARD
+    )
 
 async def check_access(update: Update):
 
@@ -75,7 +119,8 @@ async def start(
 
 
     await update.message.reply_text(
-        "Привет! Я HyperAI 🤖",
+        "Привет! Я HyperAI 🤖\n"
+        "Выбор модели: /auto, /fast, /smart. Текущий режим: /mode.",
         reply_markup=MAIN_KEYBOARD
     )
 
@@ -99,20 +144,31 @@ async def ask_hyperai(
     try:
 
         answer, new_response_id = (
-            process_message(
+            await asyncio.to_thread(
+                process_message,
                 user_message,
-                previous_response_id
+                previous_response_id,
+                mode=chat_modes.get(chat_id, MODEL_MODE),
+                previous_user_message=chat_messages.get(chat_id)
             )
         )
 
         chat_contexts[chat_id] = (
             new_response_id
         )
+        # «Продолжи» не заменяет исходную задачу: следующее «подробнее» тоже её учитывает.
+        if not ModelRouter.is_continuation(user_message) or chat_id not in chat_messages:
+            chat_messages[chat_id] = user_message
 
-        await update.message.reply_text(
-            answer,
-            reply_markup=MAIN_KEYBOARD
-        )
+        if not answer.strip():
+            answer = "Модель завершила запрос без текстового ответа."
+
+        # Аналитический ответ может быть длиннее лимита одного сообщения Telegram.
+        for offset in range(0, len(answer), 4000):
+            await update.message.reply_text(
+                answer[offset:offset + 4000],
+                reply_markup=MAIN_KEYBOARD
+            )
 
     except Exception as error:
 
@@ -174,12 +230,16 @@ async def reset_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if not await check_access(update):
+        return
+
     chat_id = update.effective_chat.id
 
     chat_contexts.pop(
         chat_id,
         None
     )
+    chat_messages.pop(chat_id, None)
 
     await update.message.reply_text(
         "Контекст разговора сброшен.",
@@ -192,12 +252,19 @@ async def help_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if not await check_access(update):
+        return
+
     await update.message.reply_text(
         "Команды HyperAI:\n\n"
         "/summary — сводка за сегодня\n"
         "/budget — состояние бюджетов\n"
         "/goals — финансовые цели\n"
         "/analyze — анализ месяца\n"
+        "/auto — выбирать модель автоматически\n"
+        "/fast — быстрая модель\n"
+        "/smart — сильная модель\n"
+        "/mode — текущий режим\n"
         "/reset — новый диалог\n"
         "/help — помощь",
         reply_markup=MAIN_KEYBOARD
@@ -240,6 +307,9 @@ async def handle_voice(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if not await check_access(update):
+        return
+
     voice = update.message.voice
 
     telegram_file = await context.bot.get_file(
@@ -263,7 +333,8 @@ async def handle_voice(
             "🎙 Распознаю голос..."
         )
 
-        transcript = transcribe_audio(
+        transcript = await asyncio.to_thread(
+            transcribe_audio,
             file_path
         )
 
@@ -362,6 +433,14 @@ def run_telegram_bot():
             help_command
         )
     )
+    # Команды режима регистрируем так же, как существующие команды бота.
+    for command, handler in (
+        ("auto", auto_command),
+        ("fast", fast_command),
+        ("smart", smart_command),
+        ("mode", mode_command)
+    ):
+        application.add_handler(CommandHandler(command, handler))
     application.add_handler(
     MessageHandler(
         filters.VOICE,

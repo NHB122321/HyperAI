@@ -1,4 +1,30 @@
-MODEL = "gpt-5.6"
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+# Ищем .env рядом с проектом, даже если бот запущен из другой папки.
+# Переменные, уже заданные в системе, имеют приоритет перед .env.
+load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
+
+
+def _model_setting(name: str, default: str) -> str:
+    value = os.getenv(name, default).strip()
+    if not value:
+        raise ValueError(f"Настройка {name} не должна быть пустой.")
+    return value
+
+
+FAST_MODEL = _model_setting("FAST_MODEL", "gpt-5.6-luna")
+SMART_MODEL = _model_setting("SMART_MODEL", "gpt-6-astra")
+TRANSCRIPTION_MODEL = _model_setting("TRANSCRIPTION_MODEL", "gpt-transcribe")
+MODEL_MODE = os.getenv("MODEL_MODE", "auto").strip().lower()
+if MODEL_MODE not in {"auto", "fast", "smart"}:
+    raise ValueError("MODEL_MODE должен быть auto, fast или smart.")
+
+# Совместимость с модулями, которые пока импортируют прежнее имя MODEL.
+MODEL = FAST_MODEL
 
 MAX_AGENT_STEPS = 10
 

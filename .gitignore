@@ -1,5 +1,7 @@
 .env
 __pycache__/
+.venv/
+.hyperai-backups/
 *.pyc
 finance.db
 agent.log
