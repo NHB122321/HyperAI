@@ -14,7 +14,6 @@ from logger import (
 )
 
 from finance_tools import (
-    get_today_summary,
     init_database,
     add_expense,
     add_income,
@@ -741,8 +740,8 @@ def execute_tool(item):
                 transaction_id=arguments["transaction_id"],
                 amount=arguments.get("amount"),
                 category=arguments.get("category"),
-                description=arguments.get("description", ""),
-                currency=arguments.get("currency", "MDL")
+                description=arguments.get("description"),
+                currency=arguments.get("currency")
             )
         elif item.name == "get_month_summary":
 

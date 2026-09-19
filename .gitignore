@@ -8,3 +8,4 @@ agent.log
 .vscode/
 voice_messages/
 memory.json
+*_backup.py

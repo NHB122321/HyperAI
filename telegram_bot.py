@@ -269,7 +269,7 @@ async def help_command(
         "/help — помощь",
         reply_markup=MAIN_KEYBOARD
     )
-
+    
 
 async def handle_message(
     update: Update,
@@ -306,7 +306,6 @@ async def handle_voice(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     if not await check_access(update):
         return
 
@@ -324,7 +323,6 @@ async def handle_voice(
     )
 
     try:
-
         await telegram_file.download_to_drive(
             custom_path=file_path
         )
@@ -348,7 +346,6 @@ async def handle_voice(
         )
 
     except Exception as error:
-
         print(
             f"Voice error: {error}"
         )
@@ -358,17 +355,8 @@ async def handle_voice(
         )
 
     finally:
-
         if file_path.exists():
-
             file_path.unlink()
-
-
-    user_id = update.effective_user.id
-
-    await update.message.reply_text(
-        f"Твой Telegram ID: {user_id}"
-    )
 
 def run_telegram_bot():
 
