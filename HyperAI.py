@@ -3,7 +3,7 @@ from datetime import datetime
 # Конфигурация загружает .env до импорта модулей с настройками DATA_DIR.
 from config import MAX_AGENT_STEPS, AGENT_INSTRUCTIONS
 from model_router import ModelRouter
-
+from supervisor import Supervisor
 from logger import (
     log_tool,
     log_result,
@@ -44,6 +44,7 @@ from memory_tools import (
     save_memory,
     read_memory
 )
+import supervisor
 
 client = OpenAI()
 model_router = ModelRouter()
@@ -910,6 +911,42 @@ def execute_tool(item):
 # -------------------------
 # ЗАПУСК АГЕНТА
 # -------------------------
+def supervisor_llm_call(prompt: str) -> str:
+    decision = model_router.choose(
+        prompt,
+        mode="fast"
+    )
+
+    response = client.responses.create(
+        model=decision.model,
+        input=prompt
+    )
+
+    return response.output_text
+
+
+supervisor = Supervisor(
+    llm_call=supervisor_llm_call
+)
+
+def supervisor_llm_call(prompt: str) -> str:
+    decision = model_router.choose(
+        prompt,
+        mode="fast"
+    )
+
+    response = client.responses.create(
+        model=decision.model,
+        input=prompt
+    )
+
+    return response.output_text
+
+
+supervisor = Supervisor(
+    llm_call=supervisor_llm_call
+)
+
 def process_message(
     user_message,
     previous_response_id=None,
@@ -918,13 +955,35 @@ def process_message(
     previous_user_message=None
 ):
 
-    # Один выбор на весь запрос: ответы инструментов получает та же модель.
+    # -------------------------
+    # SUPERVISOR
+    # -------------------------
+
+    supervisor_decision = supervisor.decide(
+        user_message
+    )
+
+    print(
+        "[Supervisor]",
+        f"action={supervisor_decision.action},",
+        f"target={supervisor_decision.target},",
+        f"reason={supervisor_decision.reason}"
+    )
+
+
+    # Один выбор на весь запрос:
+    # ответы инструментов получает та же модель.
     decision = model_router.choose(
         user_message,
         mode=mode,
         previous_user_message=previous_user_message
     )
-    log_model_route(decision.mode, decision.model, decision.reason)
+
+    log_model_route(
+        decision.mode,
+        decision.model,
+        decision.reason
+    )
 
     init_database()
 
