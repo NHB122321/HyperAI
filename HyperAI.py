@@ -4,6 +4,7 @@ from datetime import datetime
 from config import MAX_AGENT_STEPS, AGENT_INSTRUCTIONS
 from model_router import ModelRouter
 from supervisor import Supervisor
+from research_agent import ResearchAgent
 from logger import (
     log_tool,
     log_result,
@@ -942,9 +943,39 @@ def supervisor_llm_call(prompt: str) -> str:
 
     return response.output_text
 
+def research_llm_call(prompt: str) -> str:
+    decision = model_router.choose(
+        prompt,
+        mode="smart"
+    )
+
+    response = client.responses.create(
+        model=decision.model,
+        input=prompt,
+        tools=[
+            {
+                "type": "web_search"
+            }
+        ],
+        tool_choice="auto"
+    )
+
+    return response.output_text
 
 supervisor = Supervisor(
     llm_call=supervisor_llm_call
+)
+
+research_agent_instance = ResearchAgent(
+    llm_call=research_llm_call
+)
+
+supervisor = Supervisor(
+    llm_call=supervisor_llm_call
+)
+
+research_agent = ResearchAgent(
+    llm_call=research_llm_call
 )
 
 def process_message(
@@ -970,6 +1001,35 @@ def process_message(
         f"reason={supervisor_decision.reason}"
     )
 
+    # -------------------------
+    # DELEGATION
+    # -------------------------
+
+    if (
+        supervisor_decision.action == "delegate"
+        and supervisor_decision.target == "research"
+    ):
+        print("[Supervisor → ResearchAgent]")
+
+        result = research_agent.run(
+            user_message
+        )
+
+        print(
+            "[ResearchAgent]",
+            result
+        )
+
+        if result.status == "ok":
+            return (
+                result.result,
+                previous_response_id
+            )
+
+        return (
+            f"ResearchAgent error: {result.error}",
+            previous_response_id
+        )
 
     # Один выбор на весь запрос:
     # ответы инструментов получает та же модель.
@@ -986,6 +1046,7 @@ def process_message(
     )
 
     init_database()
+    
 
     # -------------------------
     # ТЕКУЩАЯ ДАТА
