@@ -920,7 +920,7 @@ def supervisor_llm_call(prompt: str) -> str:
 
     response = client.responses.create(
         model=decision.model,
-        input=prompt
+        input=prompt,
     )
 
     return response.output_text
@@ -930,27 +930,42 @@ supervisor = Supervisor(
     llm_call=supervisor_llm_call
 )
 
-def supervisor_llm_call(prompt: str) -> str:
-    decision = model_router.choose(
-        prompt,
-        mode="fast"
-    )
-
-    response = client.responses.create(
-        model=decision.model,
-        input=prompt
-    )
-
-    return response.output_text
-
 def research_llm_call(prompt: str) -> str:
     decision = model_router.choose(
         prompt,
         mode="smart"
     )
 
+    current_date = datetime.now().strftime(
+        "%d.%m.%Y"
+    )
+
+    research_instructions = f"""
+Ты ResearchAgent системы HyperAI.
+
+АВТОРИТЕТНАЯ ТЕКУЩАЯ ДАТА:
+{current_date}
+
+Эта дата получена непосредственно от Python-приложения HyperAI.
+
+Правила работы с датой:
+
+1. Считай {current_date} текущей датой.
+2. Не заменяй её датой из внутреннего контекста модели.
+3. Не утверждай, что "в моей среде" другая текущая дата.
+4. Даты веб-страниц — это даты источников, а не текущая дата.
+5. Если сегодня {current_date}, но свежайшие найденные данные
+   относятся к предыдущему дню, скажи именно это.
+
+Например:
+"Сегодня 02.10.2026, но последние подтверждённые данные
+ETF относятся к 01.10.2026."
+
+Не выдавай вчерашние данные за сегодняшние.
+"""
     response = client.responses.create(
         model=decision.model,
+        instructions=research_instructions,
         input=prompt,
         tools=[
             {
@@ -959,7 +974,6 @@ def research_llm_call(prompt: str) -> str:
         ],
         tool_choice="auto"
     )
-
     return response.output_text
 
 supervisor = Supervisor(
@@ -991,15 +1005,9 @@ def process_message(
     # -------------------------
 
     supervisor_decision = supervisor.decide(
-        user_message
-    )
-
-    print(
-        "[Supervisor]",
-        f"action={supervisor_decision.action},",
-        f"target={supervisor_decision.target},",
-        f"reason={supervisor_decision.reason}"
-    )
+    user_message,
+    previous_user_message
+)
 
     # -------------------------
     # DELEGATION
@@ -1021,8 +1029,28 @@ def process_message(
         )
 
         if result.status == "ok":
+
+            review = supervisor.review_result(
+                user_message=user_message,
+                agent_name="ResearchAgent",
+                agent_result=result.result
+            )
+
+            print(
+                "[Supervisor Review]",
+                f"action={review.action},",
+                f"reason={review.reason}"
+            )
+
+            if review.action == "accept":
+                return (
+                    review.final_answer,
+                    previous_response_id
+                )
+
             return (
-                result.result,
+                "Supervisor решил, что результат "
+                "ResearchAgent нужно проверить повторно.",
                 previous_response_id
             )
 
@@ -1080,13 +1108,25 @@ def process_message(
     # -------------------------
     # ПЕРВЫЙ ЗАПРОС К GPT
     # -------------------------
+    contextual_user_message = user_message
+
+    if previous_user_message is not None:
+     contextual_user_message = (
+        "Предыдущий запрос пользователя:\n"
+        f"{previous_user_message}\n\n"
+        "Текущий запрос пользователя:\n"
+        f"{user_message}\n\n"
+        "Если текущий запрос является продолжением "
+        "предыдущей темы, используй этот контекст. "
+        "Если тема новая — игнорируй предыдущий запрос."
+    )
 
     request = {
-        "model": decision.model,
-        "instructions": runtime_instructions,
-        "input": user_message,
-        "tools": tools
-    }
+    "model": decision.model,
+    "instructions": runtime_instructions,
+    "input": contextual_user_message,
+    "tools": tools
+}
 
 
     if previous_response_id is not None:
