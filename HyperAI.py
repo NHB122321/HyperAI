@@ -1,10 +1,13 @@
 from datetime import datetime
-
-# Конфигурация загружает .env до импорта модулей с настройками DATA_DIR.
+from urllib import response
+from openai import OpenAI
+from crypto_tools import get_crypto_price
+from time import perf_counter
 from config import MAX_AGENT_STEPS, AGENT_INSTRUCTIONS
 from model_router import ModelRouter
 from supervisor import Supervisor
 from research_agent import ResearchAgent
+from research_response import format_research_response
 from logger import (
     log_tool,
     log_result,
@@ -32,19 +35,14 @@ from finance_tools import (
     add_goal_progress,
     get_savings_goals,
     get_financial_insights
-
 )
-
-import json
-
-from openai import OpenAI
-
-from crypto_tools import get_crypto_price
 
 from memory_tools import (
     save_memory,
     read_memory
 )
+
+import json
 import supervisor
 
 client = OpenAI()
@@ -972,9 +970,9 @@ ETF относятся к 01.10.2026."
                 "type": "web_search"
             }
         ],
-        tool_choice="auto"
+        tool_choice="required"
     )
-    return response.output_text
+    return format_research_response(response)
 
 supervisor = Supervisor(
     llm_call=supervisor_llm_call
@@ -1004,10 +1002,18 @@ def process_message(
     # SUPERVISOR
     # -------------------------
 
+    decision_start = perf_counter()
+
     supervisor_decision = supervisor.decide(
-    user_message,
-    previous_user_message
-)
+        user_message,
+        previous_user_message
+    )
+
+    decision_seconds = perf_counter() - decision_start
+
+    print(
+        f"[Решение Supervisor: {decision_seconds:.1f} сек.]"
+    )
 
     # -------------------------
     # DELEGATION
@@ -1019,9 +1025,19 @@ def process_message(
     ):
         print("[Supervisor → ResearchAgent]")
 
+        research_start = perf_counter()
+
         result = research_agent.run(
             user_message
         )
+
+        research_seconds = perf_counter() - research_start
+
+        print(
+            f"[Время исследования: {research_seconds:.1f} сек.]"
+        )  
+
+    
 
         print(
             "[ResearchAgent]",
@@ -1029,11 +1045,18 @@ def process_message(
         )
 
         if result.status == "ok":
+            review_start = perf_counter()
 
             review = supervisor.review_result(
                 user_message=user_message,
                 agent_name="ResearchAgent",
                 agent_result=result.result
+            )
+
+            review_seconds = perf_counter() - review_start
+
+            print(
+                f"[Проверка Supervisor: {review_seconds:.1f} сек.]"
             )
 
             print(
@@ -1044,7 +1067,7 @@ def process_message(
 
             if review.action == "accept":
                 return (
-                    review.final_answer,
+                    result.result,
                     previous_response_id
                 )
 
