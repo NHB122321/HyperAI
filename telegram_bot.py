@@ -170,10 +170,10 @@ async def ask_hyperai(
                 reply_markup=MAIN_KEYBOARD
             )
 
-    except Exception as error:
+    except Exception:
 
         print(
-            f"Telegram error: {error}"
+            "Не удалось обработать запрос Telegram."
         )
 
         await update.message.reply_text(
@@ -345,9 +345,9 @@ async def handle_voice(
             transcript
         )
 
-    except Exception as error:
+    except Exception:
         print(
-            f"Voice error: {error}"
+            "Не удалось обработать голосовое сообщение Telegram."
         )
 
         await update.message.reply_text(

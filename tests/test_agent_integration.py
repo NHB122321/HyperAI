@@ -10,7 +10,9 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
+
+from openai import APITimeoutError
 
 
 def response(response_id, output=(), text="Готово"):
@@ -64,8 +66,37 @@ class AgentIntegrationTests(unittest.TestCase):
         self.data_dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.enterContext(patch.object(self.finance, "DB_FILE", self.data_dir / "finance.db"))
         self.enterContext(patch.object(self.memory, "MEMORY_FILE", self.data_dir / "memory.json"))
+        self.enterContext(patch.object(
+            self.agent.supervisor, "llm_call",
+            return_value='{"action": "direct", "target": null, "reason": "local task"}',
+        ))
         self.create = self.enterContext(patch.object(self.agent.client.responses, "create"))
         self.enterContext(patch("builtins.print"))
+
+    def test_openai_client_uses_explicit_timeout_without_sdk_retries(self):
+        self.assertEqual(self.agent.client.timeout, 60.0)
+        self.assertEqual(self.agent.client.max_retries, 0)
+
+    def test_voice_client_uses_explicit_timeout_without_sdk_retries(self):
+        with patch.dict(sys.modules):
+            sys.modules.pop("voice_tools", None)
+            with closing(importlib.import_module("voice_tools").client) as client:
+                self.assertEqual(client.timeout, 60.0)
+                self.assertEqual(client.max_retries, 0)
+
+    def test_research_timeout_and_internal_details_stay_out_of_reply(self):
+        self.agent.supervisor.llm_call.return_value = (
+            '{"action":"delegate","target":"research","reason":"test"}'
+        )
+        for error in (APITimeoutError(request=Mock()), RuntimeError("internal-secret")):
+            with self.subTest(error=type(error).__name__):
+                self.create.reset_mock()
+                self.create.side_effect = error
+                with patch.object(self.agent.supervisor, "review_result") as review:
+                    result = self.agent.process_message("Найди новости", "previous")
+                self.assertEqual(result, ("Не удалось завершить поиск. Попробуйте позже.", "previous"))
+                self.create.assert_called_once()
+                review.assert_not_called()
 
     def test_auto_routes_simple_and_complex_requests_and_preserves_return_contract(self):
         for message, expected_model in (
@@ -133,6 +164,63 @@ class AgentIntegrationTests(unittest.TestCase):
 
         self.assertEqual(self.create.call_args.kwargs["model"], self.config.SMART_MODEL)
         self.assertEqual(self.create.call_args.kwargs["previous_response_id"], "complex-task")
+
+    def test_supervisor_delegates_and_reviews_with_separate_model_roles(self):
+        search = SimpleNamespace(type="web_search_call", status="completed")
+        citation = SimpleNamespace(
+            type="url_citation", url="https://example.com/source",
+            start_index=5, end_index=9, title="Source",
+        )
+        part = SimpleNamespace(type="output_text", text="Факты [1]", annotations=[citation])
+        message = SimpleNamespace(type="message", content=[part])
+        self.create.side_effect = [
+            response("route", text='{"action": "delegate", "target": "research", "reason": "news"}'),
+            SimpleNamespace(status="completed", output=[search, message]),
+            response("review", text='{"action": "accept", "reason": "complete"}'),
+        ]
+        with (
+            patch.object(self.agent.supervisor, "llm_call", self.agent.supervisor_llm_call),
+            patch.object(self.agent.model_router, "choose", wraps=self.agent.model_router.choose) as choose,
+        ):
+            result = self.agent.process_message("Какие сегодня новости?", "previous-turn")
+
+        self.assertEqual(result, ("Факты (https://example.com/source)", "previous-turn"))
+        choose.assert_not_called()
+        route, research, review = [item.kwargs for item in self.create.call_args_list]
+        self.assertEqual(
+            [route["model"], research["model"], review["model"]],
+            [self.config.FAST_MODEL, self.config.SMART_MODEL, self.config.FAST_MODEL],
+        )
+        self.assertEqual(research["tools"], [{"type": "web_search"}])
+        self.assertIn(result[0], review["input"])
+
+    def test_research_retry_passes_context_and_feedback_and_is_bounded(self):
+        for second_review, expected in (
+            ('{"action":"accept","reason":"complete"}', "Второй ответ"),
+            ('{"action":"retry","reason":"still incomplete"}',
+             "Supervisor не подтвердил результат после повторного исследования."),
+        ):
+            with self.subTest(second_review=second_review):
+                route_and_review = Mock(side_effect=[
+                    '{"action":"delegate","target":"research","reason":"news"}',
+                    '{"action":"retry","reason":"Добавь даты публикаций"}',
+                    second_review,
+                ])
+                research = Mock(side_effect=["Первый ответ", "Второй ответ"])
+                with (
+                    patch.object(self.agent.supervisor, "llm_call", route_and_review),
+                    patch.object(self.agent.research_agent, "llm_call", research),
+                ):
+                    result = self.agent.process_message(
+                        "А за неделю?", "previous-turn", previous_user_message="Новости Молдовы"
+                    )
+                self.assertEqual(result, (expected, "previous-turn"))
+                self.assertEqual(research.call_count, 2)
+                self.assertEqual(route_and_review.call_count, 3)
+                for request in research.call_args_list + route_and_review.call_args_list:
+                    self.assertIn("Новости Молдовы", request.args[0])
+                    self.assertIn("А за неделю?", request.args[0])
+                self.assertIn("Добавь даты публикаций", research.call_args.args[0])
 
     def test_finance_tools_keep_writing_and_reading_real_temporary_database(self):
         writes = [

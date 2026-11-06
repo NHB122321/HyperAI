@@ -1,6 +1,6 @@
 """Проверка веб-поиска и ссылки из метаданных Responses API."""
 
-import logging
+from logger import log_search, log_sources
 from urllib.parse import urlsplit
 
 def format_research_response(response) -> str:
@@ -10,7 +10,7 @@ def format_research_response(response) -> str:
 
     calls = [item for item in response.output if item.type == "web_search_call"]
     completed = [item for item in calls if item.status == "completed"]
-    logging.info("Research web search: calls=%s completed=%s", len(calls), len(completed))
+    log_search(len(calls), len(completed))
     if not completed:
         raise ValueError("API не подтвердил завершённый веб-поиск. Актуальные данные не проверены.")
 
@@ -53,5 +53,5 @@ def format_research_response(response) -> str:
     if not sources:
         raise ValueError("Поиск выполнялся, но API не вернул цитируемые источники. Попробуй уточнить запрос.")
 
-    logging.info("Research cited sources: %s", len(sources))
+    log_sources(len(sources))
     return "\n\n".join(texts)

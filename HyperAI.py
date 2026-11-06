@@ -3,10 +3,11 @@ from urllib import response
 from openai import OpenAI
 from crypto_tools import get_crypto_price
 from time import perf_counter
-from config import MAX_AGENT_STEPS, AGENT_INSTRUCTIONS
+from config import MAX_AGENT_STEPS, AGENT_INSTRUCTIONS, OPENAI_TIMEOUT_SECONDS
 from model_router import ModelRouter
 from supervisor import Supervisor
-from research_agent import ResearchAgent
+from research_agent import RESEARCH_ERROR_MESSAGE, ResearchAgent
+from agent_result import AgentResult
 from research_response import format_research_response
 from logger import (
     log_tool,
@@ -45,7 +46,7 @@ from memory_tools import (
 import json
 import supervisor
 
-client = OpenAI()
+client = OpenAI(timeout=OPENAI_TIMEOUT_SECONDS, max_retries=0)
 model_router = ModelRouter()
 
 
@@ -911,13 +912,8 @@ def execute_tool(item):
 # ЗАПУСК АГЕНТА
 # -------------------------
 def supervisor_llm_call(prompt: str) -> str:
-    decision = model_router.choose(
-        prompt,
-        mode="fast"
-    )
-
     response = client.responses.create(
-        model=decision.model,
+        model=model_router.fast_model,
         input=prompt,
     )
 
@@ -929,11 +925,6 @@ supervisor = Supervisor(
 )
 
 def research_llm_call(prompt: str) -> str:
-    decision = model_router.choose(
-        prompt,
-        mode="smart"
-    )
-
     current_date = datetime.now().strftime(
         "%d.%m.%Y"
     )
@@ -962,7 +953,7 @@ ETF относятся к 01.10.2026."
 Не выдавай вчерашние данные за сегодняшние.
 """
     response = client.responses.create(
-        model=decision.model,
+        model=model_router.smart_model,
         instructions=research_instructions,
         input=prompt,
         tools=[
@@ -1025,61 +1016,36 @@ def process_message(
     ):
         print("[Supervisor → ResearchAgent]")
 
-        research_start = perf_counter()
+        task = user_message
+        if previous_user_message:
+            task = (
+                "Предыдущий запрос (учитывай только для уточнения текущего):\n"
+                f"{previous_user_message}\n\n"
+                f"Текущий запрос:\n{user_message}"
+            )
 
-        result = research_agent.run(
-            user_message
-        )
+        feedback = None
+        for _ in range(2):
+            result = research_agent.run(task, feedback=feedback)
+            if not isinstance(result, AgentResult) or not result.is_valid():
+                return RESEARCH_ERROR_MESSAGE, previous_response_id
 
-        research_seconds = perf_counter() - research_start
-
-        print(
-            f"[Время исследования: {research_seconds:.1f} сек.]"
-        )  
-
-    
-
-        print(
-            "[ResearchAgent]",
-            result
-        )
-
-        if result.status == "ok":
-            review_start = perf_counter()
+            if result.status == "error":
+                return RESEARCH_ERROR_MESSAGE, previous_response_id
 
             review = supervisor.review_result(
-                user_message=user_message,
+                user_message=task,
                 agent_name="ResearchAgent",
-                agent_result=result.result
+                agent_result=result.result,
             )
-
-            review_seconds = perf_counter() - review_start
-
-            print(
-                f"[Проверка Supervisor: {review_seconds:.1f} сек.]"
-            )
-
-            print(
-                "[Supervisor Review]",
-                f"action={review.action},",
-                f"reason={review.reason}"
-            )
-
             if review.action == "accept":
-                return (
-                    result.result,
-                    previous_response_id
-                )
+                return result.result, previous_response_id
 
-            return (
-                "Supervisor решил, что результат "
-                "ResearchAgent нужно проверить повторно.",
-                previous_response_id
-            )
+            feedback = review.reason
 
         return (
-            f"ResearchAgent error: {result.error}",
-            previous_response_id
+            "Supervisor не подтвердил результат после повторного исследования.",
+            previous_response_id,
         )
 
     # Один выбор на весь запрос:
@@ -1209,8 +1175,7 @@ def process_message(
         for item in tool_calls:
 
             print(
-                f"[Агент использует: "
-                f"{item.name}]"
+                "[Агент использует инструмент]"
             )
 
             log_tool(
@@ -1224,7 +1189,7 @@ def process_message(
 
 
             print(
-                f"[Результат: {result}]"
+                "[Инструмент завершил выполнение]"
             )
 
             log_result(

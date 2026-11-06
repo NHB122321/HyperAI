@@ -3,11 +3,14 @@ from typing import Callable
 from agent_result import AgentResult
 
 
+RESEARCH_ERROR_MESSAGE = "Не удалось завершить поиск. Попробуйте позже."
+
+
 class ResearchAgent:
     def __init__(self, llm_call: Callable[[str], str]):
         self.llm_call = llm_call
 
-    def run(self, task: str) -> AgentResult:
+    def run(self, task: str, *, feedback: str | None = None) -> AgentResult:
         """
         Выполняет исследовательскую задачу.
         """
@@ -53,18 +56,27 @@ class ResearchAgent:
 {task}
 """
 
+        if feedback:
+            prompt += (
+                "\nЗамечания Supervisor к предыдущей попытке:\n"
+                f"{feedback}\n"
+                "Устрани замечания и верни полный ответ на исходную задачу."
+            )
+
         try:
             answer = self.llm_call(prompt)
-
-            return AgentResult(
-                status="ok",
-                result=answer,
-                source="research"
-            )
-
-        except Exception as error:
+        except Exception:
             return AgentResult(
                 status="error",
-                error=str(error),
-                source="research"
+                error=RESEARCH_ERROR_MESSAGE,
+                source="research",
             )
+
+        result = AgentResult(status="ok", result=answer, source="research")
+        if result.is_valid():
+            return result
+        return AgentResult(
+            status="error",
+            error=RESEARCH_ERROR_MESSAGE,
+            source="research",
+        )

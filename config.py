@@ -27,6 +27,7 @@ if MODEL_MODE not in {"auto", "fast", "smart"}:
 MODEL = FAST_MODEL
 
 MAX_AGENT_STEPS = 10
+OPENAI_TIMEOUT_SECONDS = 60.0
 
 
 AGENT_INSTRUCTIONS = """

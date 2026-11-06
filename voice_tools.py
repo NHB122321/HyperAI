@@ -1,8 +1,8 @@
-from config import TRANSCRIPTION_MODEL
+from config import OPENAI_TIMEOUT_SECONDS, TRANSCRIPTION_MODEL
 from openai import OpenAI
 
 
-client = OpenAI()
+client = OpenAI(timeout=OPENAI_TIMEOUT_SECONDS, max_retries=0)
 
 
 def transcribe_audio(file_path):

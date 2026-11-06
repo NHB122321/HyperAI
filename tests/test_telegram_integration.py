@@ -153,7 +153,13 @@ class TelegramIntegrationTests(unittest.IsolatedAsyncioTestCase):
             for index in range(5)
         ]
         messages = [complex_task, "Продолжи", "Подробнее", "Привет", "Почему"]
-        with patch.object(self.agent.client.responses, "create", side_effect=replies) as create:
+        with (
+            patch.object(
+                self.agent.supervisor, "llm_call",
+                return_value='{"action": "direct", "target": null, "reason": "local task"}',
+            ),
+            patch.object(self.agent.client.responses, "create", side_effect=replies) as create,
+        ):
             for index, message in enumerate(messages):
                 await self.bot.ask_hyperai(update, message)
                 expected_anchor = complex_task if index < 3 else "Привет"
